@@ -92,48 +92,82 @@ class PokerEnvironment:
             'current_player': self.current_player
         }
     
-    def step(self, action: str) -> Tuple[Dict, float, bool]:
-        """Process player action with sophisticated reward shaping"""
-        reward = 0
-        done = False
+    def _calculate_action_value(self, action: str, hand_strength: float, pot: int, bet: int) -> float:
+        """Calculate the expected value of an action"""
+        if action == 'fold':
+            return 0  # We lose nothing more but gain nothing
         
-        # Base reward from hand strength
+        elif action == 'call':
+            # Expected value = (win_probability * pot) - bet
+            win_prob = hand_strength
+            return (win_prob * (pot + bet)) - bet
+            
+        else:  # raise
+            # Expected value for raise is similar but with doubled bet
+            win_prob = hand_strength
+            return (win_prob * (pot + bet * 2)) - (bet * 2)
+    
+    def step(self, action: str) -> Tuple[Dict, float, bool]:
+        """Process player action with sophisticated reward shaping including regret"""
+        reward = 0
+        done = True  # End episode after action
+        
+        # Calculate hand strengths
         current_hand_strength = self._calculate_hand_strength(self.players[self.current_player])
         opponent_hand_strength = self._calculate_hand_strength(self.players[1 - self.current_player])
         
-        # Calculate relative hand strength compared to opponent
-        relative_strength = current_hand_strength - opponent_hand_strength
+        # Calculate actual value of chosen action
+        chosen_value = self._calculate_action_value(action, current_hand_strength, self.pot, self.current_bet)
         
-        # Action-specific rewards with adjusted values
+        # Calculate values of alternative actions
+        alternative_values = {
+            'fold': self._calculate_action_value('fold', current_hand_strength, self.pot, self.current_bet),
+            'call': self._calculate_action_value('call', current_hand_strength, self.pot, self.current_bet),
+            'raise': self._calculate_action_value('raise', current_hand_strength, self.pot, self.current_bet)
+        }
+        
+        # Calculate regret (difference between chosen action and best alternative)
+        best_alternative_value = max(alternative_values.values())
+        regret = best_alternative_value - chosen_value
+        
+        # Base reward calculation
         if action == 'fold':
-            if current_hand_strength > 0.7:
-                reward = -1.0  # Big penalty for folding a strong hand
-            elif current_hand_strength < 0.3:
-                reward = 0.2   # Small reward for folding a weak hand
+            if current_hand_strength > opponent_hand_strength:
+                reward -= 1.0  # Big penalty for folding winning hand
+                reward -= regret * 0.5  # Additional penalty based on regret
             else:
-                reward = -0.2  # Small penalty for folding a medium hand
+                reward += 0.2  # Small reward for folding losing hand
                 
         elif action == 'call':
-            if 0.3 <= current_hand_strength <= 0.7:
-                reward = 0.5   # Good reward for calling with medium hand
+            if current_hand_strength > opponent_hand_strength:
+                reward += 1.0  # Good reward for calling with winning hand
             else:
-                reward = -0.2  # Small penalty for calling with very weak or very strong hand
+                reward -= 0.5  # Penalty for calling with losing hand
+            reward -= regret * 0.3  # Adjust based on regret
                 
         elif action == 'raise':
-            if current_hand_strength > 0.7:
-                reward = 1.0   # Big reward for raising with strong hand
-            elif current_hand_strength < 0.3:
-                reward = -0.8  # Big penalty for raising with weak hand
+            if current_hand_strength > opponent_hand_strength:
+                reward += 1.5  # Big reward for raising with winning hand
             else:
-                reward = 0.0   # Neutral for raising with medium hand
+                reward -= 1.0  # Big penalty for raising with losing hand
+            reward -= regret * 0.3  # Adjust based on regret
         
         # Add position and pot odds considerations
-        reward += self._calculate_position_reward(self.current_player, 2)
-        reward += self._calculate_pot_odds_reward(action)
+        position_bonus = self._calculate_position_reward(self.current_player, 2)
+        pot_odds_bonus = self._calculate_pot_odds_reward(action)
         
-        done = True  # End the episode after each action for now
+        # Final reward calculation
+        final_reward = reward + position_bonus + pot_odds_bonus
         
-        return self.get_state(), reward, done
+        # Print debugging info
+        print(f"\nAction taken: {action}")
+        print(f"Hand strength: {current_hand_strength:.2f} vs {opponent_hand_strength:.2f}")
+        print(f"Action values: {alternative_values}")
+        print(f"Regret: {regret:.2f}")
+        print(f"Base reward: {reward:.2f}")
+        print(f"Final reward: {final_reward:.2f}")
+        
+        return self.get_state(), final_reward, done
     
     def reset(self):
         """Reset the game state"""
