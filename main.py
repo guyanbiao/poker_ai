@@ -13,7 +13,7 @@ def train_model():
         print("Starting with fresh model...")
         poker_llm = PokerLLM()
     
-    num_episodes = 30  # Increased for better learning
+    num_episodes = 5  # Increased for better learning
     
     # Track metrics
     rewards_history = []
@@ -40,15 +40,14 @@ def train_model():
         rewards_history.append(episode_reward)
         losses_history.append(episode_loss)
         
-        if episode % 10 == 0:
-            print(f"Episode {episode}/{num_episodes}")
-            print(f"Reward: {episode_reward:.3f}")
-            print(f"Current action distribution:")
-            total_actions = sum(actions_history.values())
-            for action, count in actions_history.items():
-                percentage = (count / total_actions) * 100 if total_actions > 0 else 0
-                print(f"{action}: {percentage:.1f}%")
-            print("------------------------")
+        print(f"Episode {episode}/{num_episodes}")
+        print(f"Reward: {episode_reward:.3f}")
+        print(f"Current action distribution:")
+        total_actions = sum(actions_history.values())
+        for action, count in actions_history.items():
+            percentage = (count / total_actions) * 100 if total_actions > 0 else 0
+            print(f"{action}: {percentage:.1f}%")
+        print("------------------------")
     
     # Plot training results
     plt.figure(figsize=(12, 4))
@@ -70,12 +69,49 @@ def train_model():
     
     return poker_llm
 
+def analyze_strategy(poker_llm):
+    """Analyze the model's strategy for each possible hand"""
+    hands = [
+        ['A♠', 'A♣'],  # AA
+        ['K♠', 'K♣'],  # KK
+        ['Q♠', 'Q♣']   # QQ
+    ]
+    
+    bet_sizes = [10, 30, 50]  # Test different bet sizes
+    print("\nSTRATEGY ANALYSIS")
+    print("=" * 50)
+    
+    for hand in hands:
+        print(f"\nHand: {' '.join(hand)} (Strength: {poker_llm.env._calculate_hand_strength(hand):.1f})")
+        print("-" * 30)
+        actions = {'fold': 0, 'call': 0, 'raise': 0}
+        
+        for bet in bet_sizes:
+            for _ in range(5):  # Test each scenario multiple times
+                state = {
+                    'hand': hand,
+                    'opponent_hand': None,  # Not needed for decision
+                    'pot': 100,
+                    'current_bet': bet,
+                    'current_player': 0
+                }
+                action = poker_llm.get_action(state)
+                actions[action] += 1
+        
+        total = sum(actions.values())
+        print(f"Action distribution across different bet sizes:")
+        for action, count in actions.items():
+            percentage = (count / total) * 100
+            print(f"{action}: {percentage:.1f}%")
+
 def main():
     print("Training new model...")
     poker_llm = train_model()
     
-    print("\nTesting trained model...")
-    # Test with all possible hand combinations
+    # Run strategy analysis
+    analyze_strategy(poker_llm)
+    
+    print("\nTesting specific matchups...")
     test_hands = [
         (['A♠', 'A♣'], ['K♠', 'K♣']),  # AA vs KK (should raise)
         (['K♠', 'K♣'], ['Q♠', 'Q♣']),  # KK vs QQ (should raise)
@@ -83,6 +119,9 @@ def main():
         (['K♠', 'K♣'], ['A♠', 'A♣']),  # KK vs AA (should fold/call)
         (['Q♠', 'Q♣'], ['K♠', 'K♣'])   # QQ vs KK (should fold/call)
     ]
+    
+    print("\nSPECIFIC MATCHUP RESULTS")
+    print("=" * 50)
     
     for player_hand, opponent_hand in test_hands:
         state = {
@@ -93,11 +132,10 @@ def main():
             'current_player': 0
         }
         action = poker_llm.get_action(state)
-        print(f"\nTest case:")
-        print(f"Your hand: {player_hand}")
-        print(f"Opponent's hand: {opponent_hand}")
+        print(f"\nMatchup: {' '.join(player_hand)} vs {' '.join(opponent_hand)}")
         print(f"Model's action: {action}")
         print(f"Expected action: {'raise' if player_hand[0][0] > opponent_hand[0][0] else 'fold/call'}")
+        print(f"Correct? {'✓' if (player_hand[0][0] > opponent_hand[0][0] and action == 'raise') or (player_hand[0][0] < opponent_hand[0][0] and action in ['fold', 'call']) else '✗'}")
 
 if __name__ == "__main__":
     main() 

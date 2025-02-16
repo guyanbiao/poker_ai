@@ -51,11 +51,6 @@ class PokerLLM:
         Pot: ${state['pot']}
         Current bet: ${state['current_bet']}
         
-        Strategy guide:
-        - With AA (strength 1.0): Always raise
-        - With KK (strength 0.8): Call or raise
-        - With QQ (strength 0.6): Call if bet is small, fold if raised
-        
         What action would you like to take? Choose one: fold/call/raise
         """
     
@@ -64,31 +59,27 @@ class PokerLLM:
         input_text = self.format_state(state)
         inputs = self.tokenizer(input_text, return_tensors="pt").to(self.device)
         
-        try:
-            input_length = inputs.input_ids.shape[1]
-            max_length = input_length + 20  # Allow 20 more tokens for the response
+        input_length = inputs.input_ids.shape[1]
+        max_length = input_length + 20  # Allow 20 more tokens for the response
+        
+        print(f"\nCurrent state:\n{input_text}")  # Print the current state
+        
+        with torch.no_grad():
+            outputs = self.model.generate(
+                inputs.input_ids,
+                max_length=max_length,  # Use dynamic max_length
+                num_return_sequences=1,
+                pad_token_id=self.tokenizer.eos_token_id,
+                do_sample=True,
+                temperature=0.7
+            )
+        
+        action = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        parsed_action = self._parse_action(action)
+        print(f"Model output: {action}")
+        print(f"Parsed action: {parsed_action}")
+        return parsed_action
             
-            print(f"\nCurrent state:\n{input_text}")  # Print the current state
-            
-            with torch.no_grad():
-                outputs = self.model.generate(
-                    inputs.input_ids,
-                    max_length=max_length,  # Use dynamic max_length
-                    num_return_sequences=1,
-                    pad_token_id=self.tokenizer.eos_token_id,
-                    do_sample=True,
-                    temperature=0.7
-                )
-            
-            action = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            parsed_action = self._parse_action(action)
-            print(f"Model output: {action}")
-            print(f"Parsed action: {parsed_action}")
-            return parsed_action
-            
-        except Exception as e:
-            print(f"Error generating action: {e}")
-            return 'fold'  # Default to fold if there's an error
     
     def train(self, num_episodes: int = 1000):
         """Train the model using reinforcement learning"""
