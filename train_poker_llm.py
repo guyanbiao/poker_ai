@@ -34,11 +34,18 @@ class PokerLLM:
         
     def format_state(self, state: Dict) -> str:
         """Convert poker state to text format for LLM"""
+        hand_strength = self.env._calculate_hand_strength(state['hand'])
         return f"""
-        Your hand: {' '.join(state['hand'])}
+        You are playing poker. Make a strategic decision based on:
+        Your hand: {' '.join(state['hand'])} (Hand strength: {hand_strength:.2f})
         Pot: ${state['pot']}
         Current bet: ${state['current_bet']}
-        What action would you like to take? (fold/call/raise)
+        
+        If you have a strong hand (strength > 0.7), you should raise.
+        If you have a medium hand (strength > 0.4), you should call.
+        If you have a weak hand, you should fold.
+        
+        What action would you like to take? Choose one: fold/call/raise
         """
     
     def get_action(self, state: Dict) -> str:
@@ -113,10 +120,28 @@ class PokerLLM:
     def _parse_action(self, action_text: str) -> str:
         """Parse model output to valid poker action"""
         valid_actions = ['fold', 'call', 'raise']
-        for valid_action in valid_actions:
-            if valid_action in action_text.lower():
-                return valid_action
-        return 'fold'  # Default action if no valid action found
+        
+        # If no valid action is found in the text, make a strategic choice
+        # based on the current hand strength
+        if not any(action in action_text.lower() for action in valid_actions):
+            hand_strength = self.env._calculate_hand_strength(self.env.players[self.env.current_player])
+            if hand_strength > 0.7:
+                return 'raise'
+            elif hand_strength > 0.4:
+                return 'call'
+            return 'fold'
+            
+        # Count occurrences of each action word
+        action_counts = {
+            action: action_text.lower().count(action)
+            for action in valid_actions
+        }
+        
+        # Return the most mentioned action
+        if any(action_counts.values()):
+            return max(action_counts.items(), key=lambda x: x[1])[0]
+            
+        return 'call'  # Default to call instead of fold
 
     def save_model(self, path: str = "poker_model"):
         """Save the trained model and tokenizer"""
