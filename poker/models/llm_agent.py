@@ -1,85 +1,59 @@
 from typing import List, Tuple, Dict
-import os
-import time
-import random
-from llama_cpp import Llama
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from ..engine.game import Action, GamePhase, ShortDeckPokerGame
 
 class LLMPokerAgent:
-    def __init__(self, player_id: int, personality: str = "balanced", model_path: str = "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"):
+    def __init__(self, player_id: int, personality: str = "balanced", model=None, tokenizer=None):
         """
-        Initialize a poker agent using a local LLM.
+        Initialize a poker agent using the DeepSeek model.
         Args:
             player_id: The ID of the player
             personality: The playing style of the agent
-            model_path: Path to the local GGUF model file
+            model: Optional pre-loaded model
+            tokenizer: Optional pre-loaded tokenizer
         """
         print(f"Initializing LLM for agent {player_id}...")
         self.player_id = player_id
         self.personality = personality
-        start_time = time.time()
-        
-        # Try to initialize with Metal first, fall back to CPU if it fails
-        try:
-            print("Attempting to initialize with Metal acceleration...")
-            self.model = Llama(
-                model_path=model_path,
-                n_ctx=512,       # Reduced context window further
-                n_threads=4,     # Reduced threads
-                n_batch=8,       # Reduced batch size
-                n_gpu_layers=1   # Try Metal acceleration
-            )
-        except (ValueError, RuntimeError) as e:
-            print(f"Metal initialization failed, falling back to CPU-only mode: {e}")
-            self.model = Llama(
-                model_path=model_path,
-                n_ctx=512,       # Small context window
-                n_threads=4,     # Use fewer threads
-                n_batch=8,       # Small batch size
-                n_gpu_layers=0   # CPU only
-            )
-            
-        elapsed = time.time() - start_time
-        print(f"LLM initialization took {elapsed:.2f} seconds")
+        self.model = model
+        self.tokenizer = tokenizer
         self.action_history: List[Dict] = []
 
     def get_action(self, game_state: dict) -> Tuple[Action, int]:
         """
-        Use local LLM to decide on the next poker action based on the current game state.
+        Use DeepSeek model to decide on the next poker action based on the current game state.
         Returns a tuple of (action, amount).
         """
         # Format the game state into a prompt
         system_prompt = self._get_system_prompt()
         user_prompt = self._format_prompt(game_state)
         
-        # Combine prompts in chat format
-        full_prompt = f"""<|im_start|>system
-{system_prompt}
-<|im_end|>
-<|im_start|>user
-{user_prompt}
-<|im_end|>
-<|im_start|>assistant
-I choose to"""
+        # Combine prompts in DeepSeek's format
+        full_prompt = (
+            f"### Instruction: {system_prompt}\n\n"
+            f"{user_prompt}\n\n"
+            "### Response: Based on the game state, I choose to"
+        )
         
         # Get model response
         print(f"Agent {self.player_id} thinking...")
-        inference_start = time.time()
         try:
-            response = self.model(
-                full_prompt,
-                max_tokens=16,    # Reduced max tokens further
+            inputs = self.tokenizer(full_prompt, return_tensors="pt").to(self.model.device)
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=16,
                 temperature=0.7,
-                stop=["<|im_end|>", "\n"],
-                echo=False
+                do_sample=True,
+                pad_token_id=self.tokenizer.pad_token_id
             )
-            inference_time = time.time() - inference_start
-            print(f"LLM inference took {inference_time:.2f} seconds")
-
-            # Parse the response into an action
-            action_str = response['choices'][0]['text'].strip().lower()
-            print(f"Raw response: {action_str}")
-            return self._parse_action(action_str, game_state['valid_actions'])
+            
+            response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            # Extract just the response part
+            response = response.split("### Response:")[-1].strip()
+            print(f"Raw response: {response}")
+            
+            return self._parse_action(response, game_state['valid_actions'])
         except Exception as e:
             print(f"Error during inference: {e}")
             # Return a random valid action as fallback
@@ -112,7 +86,8 @@ Consider pot odds, position, and opponent tendencies in your decision."""
             "aggressive": "\nYou prefer an aggressive playing style, favoring raises and bluffs when you have reasonable equity.",
             "conservative": "\nYou prefer a tight-conservative playing style, only playing strong hands and avoiding marginal situations.",
             "balanced": "\nYou maintain a balanced playing style, mixing up your play to remain unpredictable.",
-            "exploitative": "\nYou focus on exploiting opponent tendencies and adjusting your strategy based on their patterns."
+            "exploitative": "\nYou focus on exploiting opponent tendencies and adjusting your strategy based on their patterns.",
+            "learner": "\nYou are learning to play poker through experience, focusing on making mathematically sound decisions based on pot odds and position."
         }
 
         return base_prompt + personality_traits.get(self.personality, personality_traits["balanced"])
