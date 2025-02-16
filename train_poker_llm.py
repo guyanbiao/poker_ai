@@ -126,6 +126,22 @@ class PokerLLM:
     
     def load_model(self, path: str = "poker_model"):
         """Load a trained model and tokenizer"""
-        self.model = AutoModelForCausalLM.from_pretrained(path).to(self.device)
-        self.tokenizer = AutoTokenizer.from_pretrained(path)
-        print(f"Model loaded from {path}") 
+        try:
+            if not os.path.exists(path):
+                raise FileNotFoundError(f"No model found at {path}")
+                
+            self.model = AutoModelForCausalLM.from_pretrained(
+                path,
+                local_files_only=True,  # Only look for local files
+                torch_dtype=torch.float32
+            ).to(self.device)
+            
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                path,
+                local_files_only=True  # Only look for local files
+            )
+            print(f"Model loaded from {path}")
+        except Exception as e:
+            print(f"Error loading model: {e}")
+            print("Initializing new model...")
+            self.__init__()  # Reinitialize with default model 

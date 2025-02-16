@@ -1,10 +1,16 @@
 from train_poker_llm import PokerLLM
+import os
 
 def train_model():
     poker_llm = PokerLLM()
-    poker_llm.train(num_episodes=1000)  # Train for more episodes
+    poker_llm.train(num_episodes=20)  # Train for more episodes
 
 def use_trained_model():
+    # Check if model exists locally
+    if not os.path.exists("poker_model"):
+        print("No trained model found. Training a new model first...")
+        train_model()
+    
     # Load the trained model
     poker_llm = PokerLLM()
     poker_llm.load_model()
@@ -21,9 +27,13 @@ def use_trained_model():
     print(f"Model's action: {action}")
 
 def main():
-    # Uncomment the function you want to use
-    # train_model()  # To train the model
-    use_trained_model()  # To use the trained model
+    # First train the model
+    print("Training new model...")
+    train_model()
+    
+    # Then use it
+    print("\nTesting trained model...")
+    use_trained_model()
 
 if __name__ == "__main__":
     main() 
