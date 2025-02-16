@@ -1,11 +1,12 @@
 import os
 import sys
+import time
 from poker.training.environment import PokerEnvironment
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
 
-def download_model(model_name: str = "mistral-7b-instruct-v0.2.Q4_K_M.gguf"):
+def download_model(model_name: str = "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"):
     """Download the model if it doesn't exist."""
     import urllib.request
     import hashlib
@@ -24,10 +25,14 @@ def download_model(model_name: str = "mistral-7b-instruct-v0.2.Q4_K_M.gguf"):
     
     # Download the model
     print(f"Downloading {model_name}...")
-    url = f"https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/{model_name}"
+    url = f"https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/{model_name}"
     
     try:
-        urllib.request.urlretrieve(url, model_path)
+        with tqdm(unit='B', unit_scale=True, unit_divisor=1024) as pbar:
+            def show_progress(block_num, block_size, total_size):
+                pbar.total = total_size
+                pbar.update(block_size)
+            urllib.request.urlretrieve(url, model_path, show_progress)
         print(f"Model downloaded to {model_path}")
         return model_path
     except Exception as e:
@@ -62,11 +67,15 @@ def plot_results(reward_history):
     plt.close()
 
 def main():
+    start_time = time.time()
+    
     # Download or verify model exists
+    print("Step 1: Setting up model...")
     model_path = download_model()
     
     # Initialize environment
-    num_players = 4
+    print("\nStep 2: Initializing environment...")
+    num_players = 3
     starting_stack = 1000
     small_blind = 5
     num_episodes = 3
@@ -74,10 +83,11 @@ def main():
     env = PokerEnvironment(num_players, starting_stack, small_blind)
     
     # Run training session
-    print(f"Running {num_episodes} episodes...")
+    print(f"\nStep 3: Running {num_episodes} episodes...")
     reward_history = env.run_training_session(num_episodes)
     
     # Plot and save results
+    print("\nStep 4: Plotting results...")
     plot_results(reward_history)
     
     # Print final statistics
@@ -87,6 +97,10 @@ def main():
     
     for player, reward in total_rewards.items():
         print(f"Player {player}: Total Reward = {reward}, Average Reward per Episode = {reward/num_episodes:.2f}")
+    
+    total_time = time.time() - start_time
+    print(f"\nTotal training time: {total_time:.2f} seconds")
+    print(f"Average time per episode: {total_time/num_episodes:.2f} seconds")
 
 if __name__ == "__main__":
     main() 

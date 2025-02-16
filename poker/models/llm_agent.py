@@ -1,10 +1,12 @@
 from typing import List, Tuple, Dict
 import os
+import time
+import random
 from llama_cpp import Llama
 from ..engine.game import Action, GamePhase, ShortDeckPokerGame
 
 class LLMPokerAgent:
-    def __init__(self, player_id: int, personality: str = "balanced", model_path: str = "models/mistral-7b-instruct-v0.2.Q4_K_M.gguf"):
+    def __init__(self, player_id: int, personality: str = "balanced", model_path: str = "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"):
         """
         Initialize a poker agent using a local LLM.
         Args:
@@ -12,14 +14,33 @@ class LLMPokerAgent:
             personality: The playing style of the agent
             model_path: Path to the local GGUF model file
         """
+        print(f"Initializing LLM for agent {player_id}...")
         self.player_id = player_id
         self.personality = personality
-        self.model = Llama(
-            model_path=model_path,
-            n_ctx=2048,  # Context window
-            n_threads=4,  # Number of CPU threads to use
-            n_batch=512,  # Batch size for prompt processing
-        )
+        start_time = time.time()
+        
+        # Try to initialize with Metal first, fall back to CPU if it fails
+        try:
+            print("Attempting to initialize with Metal acceleration...")
+            self.model = Llama(
+                model_path=model_path,
+                n_ctx=512,       # Reduced context window further
+                n_threads=4,     # Reduced threads
+                n_batch=8,       # Reduced batch size
+                n_gpu_layers=1   # Try Metal acceleration
+            )
+        except (ValueError, RuntimeError) as e:
+            print(f"Metal initialization failed, falling back to CPU-only mode: {e}")
+            self.model = Llama(
+                model_path=model_path,
+                n_ctx=512,       # Small context window
+                n_threads=4,     # Use fewer threads
+                n_batch=8,       # Small batch size
+                n_gpu_layers=0   # CPU only
+            )
+            
+        elapsed = time.time() - start_time
+        print(f"LLM initialization took {elapsed:.2f} seconds")
         self.action_history: List[Dict] = []
 
     def get_action(self, game_state: dict) -> Tuple[Action, int]:
@@ -32,35 +53,58 @@ class LLMPokerAgent:
         user_prompt = self._format_prompt(game_state)
         
         # Combine prompts in chat format
-        full_prompt = f"""<s>[INST] <<SYS>>
+        full_prompt = f"""<|im_start|>system
 {system_prompt}
-<</SYS>>
-
-{user_prompt} [/INST]"""
+<|im_end|>
+<|im_start|>user
+{user_prompt}
+<|im_end|>
+<|im_start|>assistant
+I choose to"""
         
         # Get model response
-        response = self.model(
-            full_prompt,
-            max_tokens=64,
-            temperature=0.7,
-            stop=["</s>", "[/INST]", "\n"],
-            echo=False
-        )
+        print(f"Agent {self.player_id} thinking...")
+        inference_start = time.time()
+        try:
+            response = self.model(
+                full_prompt,
+                max_tokens=16,    # Reduced max tokens further
+                temperature=0.7,
+                stop=["<|im_end|>", "\n"],
+                echo=False
+            )
+            inference_time = time.time() - inference_start
+            print(f"LLM inference took {inference_time:.2f} seconds")
 
-        # Parse the response into an action
-        action_str = response['choices'][0]['text'].strip().lower()
-        return self._parse_action(action_str, game_state['valid_actions'])
+            # Parse the response into an action
+            action_str = response['choices'][0]['text'].strip().lower()
+            print(f"Raw response: {action_str}")
+            return self._parse_action(action_str, game_state['valid_actions'])
+        except Exception as e:
+            print(f"Error during inference: {e}")
+            # Return a random valid action as fallback
+            return self._get_fallback_action(game_state['valid_actions'])
 
     def _get_system_prompt(self) -> str:
         """Get the system prompt based on the agent's personality."""
         base_prompt = """You are a professional poker player. Your goal is to make optimal decisions in a short-deck poker game.
-You must respond with exactly one action in the format: ACTION AMOUNT
-Valid actions are: FOLD, CHECK, CALL, or RAISE amount
-Example responses:
+You must respond with exactly one action using these exact formats:
+- To fold: "FOLD"
+- To check: "CHECK"
+- To call: "CALL"
+- To raise: "RAISE X" (where X is the amount)
+
+Example valid responses:
 FOLD
 CHECK
 CALL
 RAISE 100
+
+Invalid response examples:
+- "I want to fold"
+- "Let's raise by 100"
+- "Call the bet"
+- "Fold this hand"
 
 Consider pot odds, position, and opponent tendencies in your decision."""
 
@@ -100,40 +144,60 @@ Active players and their stacks:"""
             else:
                 prompt += f"\n- {action.value} (amount: {amount})"
 
-        prompt += "\n\nWhat action do you take?"
+        prompt += "\n\nWhat action do you take?, please respond with the action and amount like this: ACTION AMOUNT"
         return prompt
 
     def _parse_action(self, action_str: str, valid_actions: List[Tuple[Action, int]]) -> Tuple[Action, int]:
         """Parse the LLM's response into a valid action and amount."""
-        parts = action_str.split()
-        action_name = parts[0].upper()
-        amount = int(parts[1]) if len(parts) > 1 else 0
+        print(f"Parsing action............: {action_str}")
+        try:
+            # Clean up the response
+            action_str = action_str.strip().upper()
+            if action_str.startswith("I CHOOSE TO "):
+                action_str = action_str[12:]
+            
+            # Split into action and amount
+            parts = action_str.split()
+            action_name = parts[0]
+            amount = int(parts[1]) if len(parts) > 1 else 0
 
-        # Map the action string to a valid Action enum
-        action_map = {
-            "FOLD": Action.FOLD,
-            "CHECK": Action.CHECK,
-            "CALL": Action.CALL,
-            "RAISE": Action.RAISE
-        }
+            # Map the action string to a valid Action enum
+            action_map = {
+                "FOLD": Action.FOLD,
+                "CHECK": Action.CHECK,
+                "CALL": Action.CALL,
+                "RAISE": Action.RAISE
+            }
 
-        action = action_map.get(action_name)
-        if not action:
-            # Default to the first valid action if parsing fails
-            return valid_actions[0]
+            action = action_map.get(action_name)
+            if not action:
+                return self._get_fallback_action(valid_actions)
 
-        # Validate the action and amount against valid actions
-        for valid_action, valid_amount in valid_actions:
-            if valid_action == action:
-                if action in [Action.FOLD, Action.CHECK]:
-                    return (action, 0)
-                elif action == Action.CALL:
-                    return (action, valid_amount)
-                elif action == Action.RAISE:
-                    # Ensure raise amount is valid
-                    return (action, max(valid_amount, amount))
+            # Validate the action and amount against valid actions
+            for valid_action, valid_amount in valid_actions:
+                if valid_action == action:
+                    if action in [Action.FOLD, Action.CHECK]:
+                        return (action, 0)
+                    elif action == Action.CALL:
+                        return (action, valid_amount)
+                    elif action == Action.RAISE:
+                        return (action, max(valid_amount, amount))
 
-        # Default to the first valid action if no match found
+            # If we get here, the action wasn't valid
+            return self._get_fallback_action(valid_actions)
+            
+        except (ValueError, IndexError) as e:
+            print(f"Error parsing action: {e}")
+            return self._get_fallback_action(valid_actions)
+
+    def _get_fallback_action(self, valid_actions: List[Tuple[Action, int]]) -> Tuple[Action, int]:
+        """Get a fallback action when parsing fails."""
+        # Prefer CHECK or CALL if available
+        for action, amount in valid_actions:
+            if action in [Action.CHECK, Action.CALL]:
+                return (action, amount)
+        
+        # Otherwise, take the first valid action (usually FOLD)
         return valid_actions[0]
 
     def update_history(self, action: Action, amount: int, game_state: dict) -> None:
