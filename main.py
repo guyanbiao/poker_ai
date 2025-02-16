@@ -4,7 +4,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 def train_model():
-    poker_llm = PokerLLM()
+    # Check if we have a saved model
+    if os.path.exists("poker_model"):
+        print("Loading existing model...")
+        poker_llm = PokerLLM()
+        poker_llm.load_model("poker_model")
+    else:
+        print("Starting with fresh model...")
+        poker_llm = PokerLLM()
+    
     num_episodes = 30  # Increased for better learning
     
     # Track metrics
@@ -67,11 +75,13 @@ def main():
     poker_llm = train_model()
     
     print("\nTesting trained model...")
-    # Test with specific hands
+    # Test with all possible hand combinations
     test_hands = [
-        (['A♠', 'K♠'], ['Q♣', 'J♣']),  # Strong vs Medium
-        (['2♥', '7♦'], ['A♣', 'K♣']),  # Weak vs Strong
-        (['J♠', 'J♥'], ['9♣', '9♦'])   # Pair vs Pair
+        (['A♠', 'A♣'], ['K♠', 'K♣']),  # AA vs KK (should raise)
+        (['K♠', 'K♣'], ['Q♠', 'Q♣']),  # KK vs QQ (should raise)
+        (['Q♠', 'Q♣'], ['A♠', 'A♣']),  # QQ vs AA (should fold)
+        (['K♠', 'K♣'], ['A♠', 'A♣']),  # KK vs AA (should fold/call)
+        (['Q♠', 'Q♣'], ['K♠', 'K♣'])   # QQ vs KK (should fold/call)
     ]
     
     for player_hand, opponent_hand in test_hands:
@@ -87,6 +97,7 @@ def main():
         print(f"Your hand: {player_hand}")
         print(f"Opponent's hand: {opponent_hand}")
         print(f"Model's action: {action}")
+        print(f"Expected action: {'raise' if player_hand[0][0] > opponent_hand[0][0] else 'fold/call'}")
 
 if __name__ == "__main__":
     main() 

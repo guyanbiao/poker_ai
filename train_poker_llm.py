@@ -15,7 +15,19 @@ class PokerLLM:
         self.device = torch.device("cpu")
         print(f"Using device: {self.device}")
         
-        # Load tokenizer and model with PyTorch backend
+        # Initialize environment first
+        self.env = PokerEnvironment()
+        
+        # Try to load existing model first
+        if os.path.exists("poker_model"):
+            try:
+                self.load_model("poker_model")
+                return
+            except Exception as e:
+                print(f"Could not load saved model: {e}")
+                print("Starting with fresh model...")
+        
+        # Load fresh model if no saved model exists
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name,
             use_fast=True,
@@ -30,20 +42,19 @@ class PokerLLM:
             local_files_only=False
         ).to(self.device)
         
-        self.env = PokerEnvironment()
-        
     def format_state(self, state: Dict) -> str:
         """Convert poker state to text format for LLM"""
         hand_strength = self.env._calculate_hand_strength(state['hand'])
         return f"""
-        You are playing poker. Make a strategic decision based on:
-        Your hand: {' '.join(state['hand'])} (Hand strength: {hand_strength:.2f})
+        You are playing poker with pocket pairs only (AA, KK, or QQ).
+        Your hand: {' '.join(state['hand'])} (Hand strength: {hand_strength:.1f})
         Pot: ${state['pot']}
         Current bet: ${state['current_bet']}
         
-        If you have a strong hand (strength > 0.7), you should raise.
-        If you have a medium hand (strength > 0.4), you should call.
-        If you have a weak hand, you should fold.
+        Strategy guide:
+        - With AA (strength 1.0): Always raise
+        - With KK (strength 0.8): Call or raise
+        - With QQ (strength 0.6): Call if bet is small, fold if raised
         
         What action would you like to take? Choose one: fold/call/raise
         """
@@ -83,6 +94,10 @@ class PokerLLM:
         """Train the model using reinforcement learning"""
         optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-5)
         
+        # Load or initialize training history
+        if not hasattr(self, 'training_history'):
+            self.training_history = []
+        
         for episode in range(num_episodes):
             state = self.env.reset()
             done = False
@@ -111,10 +126,17 @@ class PokerLLM:
                 
                 state = next_state
             
-            if episode % 10 == 0:  # Print more frequently
+            # Save episode results
+            self.training_history.append({
+                'episode': episode,
+                'reward': episode_reward,
+                'loss': episode_loss
+            })
+            
+            if episode % 10 == 0:
                 print(f"Episode {episode}, Reward: {episode_reward}, Loss: {episode_loss:.4f}")
         
-        # Save the trained model
+        # Save the trained model and history
         self.save_model()
 
     def _parse_action(self, action_text: str) -> str:
@@ -144,10 +166,15 @@ class PokerLLM:
         return 'call'  # Default to call instead of fold
 
     def save_model(self, path: str = "poker_model"):
-        """Save the trained model and tokenizer"""
+        """Save the trained model, tokenizer, and training history"""
         self.model.save_pretrained(path)
         self.tokenizer.save_pretrained(path)
-        print(f"Model saved to {path}")
+        
+        # Save training metadata
+        if hasattr(self, 'training_history'):
+            np.save(os.path.join(path, 'training_history.npy'), self.training_history)
+        
+        print(f"Model and history saved to {path}")
     
     def load_model(self, path: str = "poker_model"):
         """Load a trained model and tokenizer"""
@@ -165,6 +192,10 @@ class PokerLLM:
                 path,
                 local_files_only=True  # Only look for local files
             )
+            
+            # Initialize environment
+            self.env = PokerEnvironment()
+            
             print(f"Model loaded from {path}")
         except Exception as e:
             print(f"Error loading model: {e}")
